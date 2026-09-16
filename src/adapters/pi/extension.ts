@@ -13,7 +13,6 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
-import { appendFile, chmod, mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -135,41 +134,6 @@ export function isSafeCurlWget(segment: string): boolean {
 let _db: SessionDB | null = null;
 let _dbPath = "";
 let _sessionId = "";
-let _outputLimitAppend = Promise.resolve();
-
-function getOutputLimitLogPath(): string {
-  return process.env.CONTEXT_MODE_OUTPUT_LIMIT_LOG
-    ?? join(homedir(), ".pi", "agent", "data", "output-limit-events.ndjson");
-}
-
-/** Append one complete, pre-truncation Pi tool result for later analysis. */
-export async function captureOutputLimitHit(event: any, context: {
-  sessionId?: string;
-  projectDir: string;
-}): Promise<void> {
-  const truncation = event?.details?.truncation;
-  const fullOutputPath = event?.details?.fullOutputPath;
-  if (!truncation?.truncated || typeof fullOutputPath !== "string" || !fullOutputPath) return;
-
-  const output = await readFile(fullOutputPath, "utf8");
-  const entry = {
-    schema_version: 1,
-    timestamp: new Date().toISOString(),
-    session_id: context.sessionId || null,
-    tool_call_id: event?.toolCallId ?? event?.tool_call_id ?? null,
-    tool_name: event?.toolName ?? event?.tool_name ?? null,
-    project_dir: context.projectDir,
-    input: event?.input ?? event?.params ?? null,
-    is_error: Boolean(event?.isError ?? event?.is_error ?? event?.error),
-    truncation,
-    full_output_path: fullOutputPath,
-    output,
-  };
-  const logPath = getOutputLimitLogPath();
-  await mkdir(dirname(logPath), { recursive: true, mode: 0o700 });
-  await appendFile(logPath, `${JSON.stringify(entry)}\n`, { encoding: "utf8", mode: 0o600 });
-  await chmod(logPath, 0o600);
-}
 
 // MCP bridge handle. The bridge spawns server.bundle.mjs once and
 // registers each MCP tool through pi.registerTool() so the Pi LLM can
@@ -565,13 +529,7 @@ export default function piExtension(pi: any): void {
 
   // ── 3. tool_result — PostToolUse event capture ─────────
 
-  pi.on("tool_result", async (event: any) => {
-    const capture = _outputLimitAppend.then(() =>
-      captureOutputLimitHit(event, { sessionId: _sessionId, projectDir }),
-    );
-    _outputLimitAppend = capture.catch(() => undefined);
-    await capture.catch(() => undefined); // telemetry must never break the tool call
-
+  pi.on("tool_result", (event: any) => {
     try {
       if (!_sessionId) return;
 

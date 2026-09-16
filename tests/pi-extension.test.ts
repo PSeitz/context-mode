@@ -18,7 +18,7 @@ import "./setup-home";
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SessionDB } from "../src/session/db.js";
@@ -102,7 +102,6 @@ describe("Pi Extension", () => {
     }
     delete process.env.PI_PROJECT_DIR;
     delete process.env.CLAUDE_PROJECT_DIR;
-    delete process.env.CONTEXT_MODE_OUTPUT_LIMIT_LOG;
   });
 
   // ═══════════════════════════════════════════════════════════
@@ -245,43 +244,6 @@ describe("Pi Extension", () => {
         tool_result: "Error: test failed with exit code 1",
         is_error: true,
       });
-    });
-
-    it("appends full output for results that hit Pi's limit", async () => {
-      const fullOutputPath = join(tempDir, "pi-bash-full.txt");
-      const logPath = join(tempDir, "output-limit-events.ndjson");
-      const output = "branch output\n".repeat(5000);
-      writeFileSync(fullOutputPath, output);
-      process.env.CONTEXT_MODE_OUTPUT_LIMIT_LOG = logPath;
-      await registerPiExtension(api);
-
-      await api._trigger("tool_result", {
-        toolName: "bash",
-        toolCallId: "call-1",
-        input: { command: "git branch -vv" },
-        content: [{ type: "text", text: "truncated tail" }],
-        details: {
-          truncation: {
-            truncated: true,
-            truncatedBy: "bytes",
-            totalBytes: Buffer.byteLength(output),
-            outputBytes: 50 * 1024,
-            totalLines: 5000,
-            outputLines: 3900,
-          },
-          fullOutputPath,
-        },
-      });
-
-      const lines = readFileSync(logPath, "utf8").trim().split("\n");
-      expect(lines).toHaveLength(1);
-      const entry = JSON.parse(lines[0]);
-      expect(entry.schema_version).toBe(1);
-      expect(entry.tool_name).toBe("bash");
-      expect(entry.tool_call_id).toBe("call-1");
-      expect(entry.input).toEqual({ command: "git branch -vv" });
-      expect(entry.output).toBe(output);
-      expect(entry.truncation.truncatedBy).toBe("bytes");
     });
 
     it("handles missing tool_result gracefully", async () => {
